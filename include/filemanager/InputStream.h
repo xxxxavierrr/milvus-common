@@ -11,7 +11,13 @@
 
 #pragma once
 
+#include <folly/futures/Future.h>
+
+#include <cstddef>
+#include <cstdint>
 #include <string>
+
+#include "common/EasyAssert.h"
 
 namespace milvus {
 class InputStream {
@@ -95,5 +101,24 @@ class InputStream {
      */
     virtual size_t
     Read(int fd, size_t size) = 0;
+
+    /**
+     * @brief Read bytes at a byte offset without blocking the calling worker on IO.
+     *
+     * The default returns a completed future holding SegcoreError(Unsupported),
+     * without calling ReadAt or accessing ptr. Streams supporting async IO must
+     * override this method. Successful reads return a byte count, including any
+     * short read; concurrent calls are supported. IO failures travel in the future.
+     *
+     * The stream and destination must remain valid until completion, including
+     * on error. Discarding or interrupting the future does not cancel the IO:
+     * callers must drain it before releasing either object. Completion means
+     * that the operation will no longer access the destination.
+     */
+    [[nodiscard]] virtual folly::SemiFuture<size_t>
+    ReadAtAsync(void* /*ptr*/, size_t /*offset*/, size_t /*size*/) {
+        return folly::makeSemiFuture<size_t>(
+            SegcoreError(ErrorCode::Unsupported, "InputStream::ReadAtAsync is not supported"));
+    }
 };
 }  // namespace milvus

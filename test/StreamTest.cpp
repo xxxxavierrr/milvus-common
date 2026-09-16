@@ -7,8 +7,10 @@
 #include <random>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
+#include "filemanager/impl/LocalFileManager.h"
 #include "filemanager/impl/LocalInputStream.h"
 #include "filemanager/impl/LocalOutputStream.h"
 #include "filemanager/impl/MemoryInputStream.h"
@@ -207,6 +209,102 @@ TEST_F(StreamTest, LocalInputStream_ReadAt) {
 
     EXPECT_EQ(bytes_read, 10u);
     EXPECT_TRUE(std::equal(read_data.begin(), read_data.end(), data.begin() + 50));
+}
+
+TEST_F(StreamTest, DefaultReadAtAsyncIsUnsupported) {
+    class ObservedStream : public LocalInputStream {
+     public:
+        using LocalInputStream::LocalInputStream;
+        size_t read_calls = 0;
+
+        size_t
+        ReadAt(void* ptr, size_t offset, size_t size) override {
+            ++read_calls;
+            return LocalInputStream::ReadAt(ptr, offset, size);
+        }
+    };
+    const std::vector<uint8_t> data = {1, 2, 3, 4};
+    WriteTestFile(data);
+    ObservedStream stream(temp_file_);
+    InputStream& input = stream;
+    std::vector<uint8_t> buffer(2, 0);
+    auto read = input.ReadAtAsync(buffer.data(), 1, buffer.size());
+    ASSERT_TRUE(read.isReady());
+    const auto result = std::move(read).getTry();
+    ASSERT_TRUE(result.hasException());
+    const auto* error = result.exception().get_exception<SegcoreError>();
+    ASSERT_NE(error, nullptr);
+    EXPECT_EQ(error->get_error_code(), ErrorCode::Unsupported);
+    EXPECT_EQ(stream.read_calls, 0);
+    EXPECT_EQ(buffer, std::vector<uint8_t>({0, 0}));
+
+    EXPECT_EQ(input.ReadAt(buffer.data(), 1, buffer.size()), buffer.size());
+    EXPECT_EQ(stream.read_calls, 1);
+    EXPECT_EQ(buffer, std::vector<uint8_t>({2, 3}));
+}
+
+TEST_F(StreamTest, DefaultOpenInputStreamAsyncIsUnsupported) {
+    class ObservedManager : public LocalFileManager {
+     public:
+        size_t open_calls = 0;
+
+        std::shared_ptr<InputStream>
+        OpenInputStream(const std::string& filename) override {
+            ++open_calls;
+            return LocalFileManager::OpenInputStream(filename);
+        }
+    };
+    const std::vector<uint8_t> data = {1, 2, 3};
+    WriteTestFile(data);
+    ObservedManager manager;
+    FileManager& file_manager = manager;
+    auto open = file_manager.OpenInputStreamAsync(temp_file_);
+    ASSERT_TRUE(open.isReady());
+    const auto result = std::move(open).getTry();
+    ASSERT_TRUE(result.hasException());
+    const auto* error = result.exception().get_exception<SegcoreError>();
+    ASSERT_NE(error, nullptr);
+    EXPECT_EQ(error->get_error_code(), ErrorCode::Unsupported);
+    EXPECT_EQ(manager.open_calls, 0);
+
+    auto input = file_manager.OpenInputStream(temp_file_);
+    EXPECT_EQ(manager.open_calls, 1);
+    EXPECT_EQ(input->Size(), data.size());
+}
+
+TEST_F(StreamTest, MemoryInputStreamReadAtAsyncIsReady) {
+    const std::vector<uint8_t> data = {1, 2, 3, 4};
+    MemoryInputStream stream(data.data(), data.size());
+    InputStream& input = stream;
+    std::vector<uint8_t> buffer(2);
+    auto read = input.ReadAtAsync(buffer.data(), 1, buffer.size());
+    EXPECT_TRUE(read.isReady());
+    EXPECT_EQ(std::move(read).get(), buffer.size());
+    EXPECT_EQ(buffer, std::vector<uint8_t>({2, 3}));
+    EXPECT_EQ(input.ReadAtAsync(buffer.data(), data.size(), 0).get(), 0);
+}
+
+TEST_F(StreamTest, OpenInputStreamAsyncOverrideCompletesThroughFuture) {
+    class AsyncManager : public LocalFileManager {
+     public:
+        folly::Promise<std::shared_ptr<InputStream>> completion;
+
+        folly::SemiFuture<std::shared_ptr<InputStream>>
+        OpenInputStreamAsync(const std::string& /*filename*/) override {
+            return completion.getSemiFuture();
+        }
+    };
+    const std::vector<uint8_t> data = {1, 2, 3};
+    AsyncManager manager;
+    FileManager& file_manager = manager;
+    auto open = file_manager.OpenInputStreamAsync("memory");
+    EXPECT_FALSE(open.isReady());
+    manager.completion.setValue(std::make_shared<MemoryInputStream>(data.data(), data.size()));
+    auto input = std::move(open).get();
+    EXPECT_EQ(input->Size(), data.size());
+    std::vector<uint8_t> buffer(data.size());
+    EXPECT_EQ(input->ReadAtAsync(buffer.data(), 0, buffer.size()).get(), buffer.size());
+    EXPECT_EQ(buffer, data);
 }
 
 TEST_F(StreamTest, LocalInputStream_ReadAtConcurrent) {

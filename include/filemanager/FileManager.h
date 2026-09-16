@@ -96,6 +96,22 @@ class FileManager {
      */
     virtual std::shared_ptr<OutputStream>
     OpenOutputStream(const std::string& filename) = 0;
+
+    /**
+     * @brief Open a fully initialized input stream without blocking the calling worker on IO.
+     *
+     * The default returns a completed future holding SegcoreError(Unsupported),
+     * without calling OpenInputStream or accessing storage. Managers supporting
+     * async IO must override it. On success, the stream is ready for use and Size()
+     * performs no IO; failures travel in the future. Implementations must copy
+     * filename if needed after this call. The manager must outlive completion,
+     * even if the caller discards or interrupts the future; neither cancels the IO.
+     */
+    [[nodiscard]] virtual folly::SemiFuture<std::shared_ptr<InputStream>>
+    OpenInputStreamAsync(const std::string& /*filename*/) {
+        return folly::makeSemiFuture<std::shared_ptr<InputStream>>(
+            SegcoreError(ErrorCode::Unsupported, "FileManager::OpenInputStreamAsync is not supported"));
+    }
 };
 
 }  // namespace milvus
