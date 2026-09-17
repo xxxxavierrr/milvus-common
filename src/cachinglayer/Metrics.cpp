@@ -147,7 +147,6 @@ CacheShardUsageMetricHandle::~CacheShardUsageMetricHandle() = default;
 
 void
 CacheShardUsageMetricHandle::Increment(double value) {
-    std::lock_guard<std::mutex> lock(shard_usage_mutex);
     if (entry_->gauge != nullptr) {
         entry_->gauge->Increment(value);
     }
@@ -155,7 +154,6 @@ CacheShardUsageMetricHandle::Increment(double value) {
 
 void
 CacheShardUsageMetricHandle::Decrement(double value) {
-    std::lock_guard<std::mutex> lock(shard_usage_mutex);
     if (entry_->gauge != nullptr) {
         entry_->gauge->Decrement(value);
     }
@@ -163,7 +161,6 @@ CacheShardUsageMetricHandle::Decrement(double value) {
 
 double
 CacheShardUsageMetricHandle::Value() const {
-    std::lock_guard<std::mutex> lock(shard_usage_mutex);
     if (entry_->gauge == nullptr) {
         return 0;
     }
